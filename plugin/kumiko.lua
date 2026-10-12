@@ -1,7 +1,7 @@
--- lattice: the Kanban board of the focused pane's repository, from the terminal.
+-- kumiko: the Kanban board of the focused pane's repository, from the terminal.
 --
 -- leader K   (shift+k) a picker over the board's cards still to start or under way
---            (Lattice's active columns first, then intake); choosing one types
+--            (Kumiko's active columns first, then intake); choosing one types
 --            `<id> ("<title>")` into the pane, without Enter, the way a card
 --            is named in a commit or in a message to an agent.
 -- In the palette (leader :): `card [board]` is the same picker, on another
@@ -11,52 +11,52 @@
 --   v      the card whole: description, checklist (esc comes back; enter, y)
 --   p      pin it to the bar (again: unpin)      w  open it in the browser
 --   r      fetch again
--- The bar: a module named `lattice` shows the repository's In Progress card
--- (the pinned one, else the first), cut to lattice.width, and `+N` for the
+-- The bar: a module named `kumiko` shows the repository's In Progress card
+-- (the pinned one, else the first), cut to kumiko.width, and `+N` for the
 -- others; a click opens the screen. It fetches when focus or a pane's
 -- directory moves to a repository it has not fetched, and every
--- lattice.refresh seconds, only while the bar shows it, never per frame.
+-- kumiko.refresh seconds, only while the bar shows it, never per frame.
 --
--- Another key: ranma.bind(KEY, function() ranma.emit("lattice_card") end), or
--- "lattice_board" for the screen; a board's slug as emit's data names one.
+-- Another key: ranma.bind(KEY, function() ranma.emit("kumiko_card") end), or
+-- "kumiko_board" for the screen; a board's slug as emit's data names one.
 --
--- Which board: lattice.boards maps a repository's directory name to a board
+-- Which board: kumiko.boards maps a repository's directory name to a board
 -- slug (`kumiko=work-hours *.ranma=ranma`); any other repository uses the
 -- board whose slug is its name, and with none the picker asks which board. A
--- worktree counts as its main checkout. Pins are kept in ranma.store("lattice").
+-- worktree counts as its main checkout. Pins are kept in ranma.store("kumiko").
 -- Read-only: it never creates, moves or edits a card. The API token is read
--- from the environment variable lattice.token_env and reaches curl on its
+-- from the environment variable kumiko.token_env and reaches curl on its
 -- stdin, never in a process's arguments.
 --
 -- ranma's plugin API: https://github.com/masshirodev/ranma/blob/main/doc/CONFIG.md ("Pickers and
 -- prompts", "Screens", "Timers and processes", "The bar").
 
-ranma.option("lattice.url", {
-  type = "string", default = "https://apps.masshiro.pro/api/kanban",
+ranma.option("kumiko.url", {
+  type = "string", default = "https://kumiko.ink/api/kanban",
   name = "API", desc = "The Kanban API's base URL: /boards and /cards are under it.",
 })
-ranma.option("lattice.token_env", {
+ranma.option("kumiko.token_env", {
   type = "string", default = "LATTICE_MCP_TOKEN",
   name = "Token variable", desc = "The environment variable holding the API token, in the environment ranma's server started with.",
 })
-ranma.option("lattice.boards", {
+ranma.option("kumiko.boards", {
   type = "string",
   default = "kumiko=work-hours wayfarer=main kuji=rents-due hansei=heimdall kizuna=ai-session *.ranma=ranma",
   name = "Boards", desc = "repository=board pairs, space-separated; *.suffix matches the end of a name. Any other repository uses the board named like it.",
 })
-ranma.option("lattice.refresh", {
+ranma.option("kumiko.refresh", {
   type = "int", min = 30, max = 3600, step = 30, default = 300, slider = false,
   name = "Refresh", desc = "Seconds between the bar's fetches of a board.",
 })
-ranma.option("lattice.width", {
+ranma.option("kumiko.width", {
   type = "int", min = 8, max = 80, default = 32,
   name = "Bar width", desc = "The most characters of a card's title the bar shows.",
 })
 
-local store = ranma.store("lattice")
+local store = ranma.store("kumiko")
 
 local function fail(err)
-  ranma.toast("lattice: " .. tostring(err), { urgent = true })
+  ranma.toast("kumiko: " .. tostring(err), { urgent = true })
 end
 
 -- The characters of a string, at most n of them, the last an ellipsis when cut.
@@ -119,10 +119,10 @@ local function repo_of(cwd)
   return name or nil
 end
 
--- The board slug for a repository, and whether lattice.boards named it.
+-- The board slug for a repository, and whether kumiko.boards named it.
 local function board_for(repo)
   local suffixed
-  for pair in ranma.get("lattice.boards"):gmatch("%S+") do
+  for pair in ranma.get("kumiko.boards"):gmatch("%S+") do
     local key, slug = pair:match("^(.-)=(.+)$")
     if key == repo then return slug, true end
     local tail = key and key:match("^%*(.+)$")
@@ -141,12 +141,12 @@ local function here()
   return p, board_for(repo)
 end
 
--- GET a path under lattice.url; done(data) or done(nil, why, status).
+-- GET a path under kumiko.url; done(data) or done(nil, why, status).
 local function fetch(path, done)
-  local var = ranma.get("lattice.token_env")
-  if not var:match("^[%a_][%w_]*$") then return done(nil, "lattice.token_env is not a variable name: " .. var) end
+  local var = ranma.get("kumiko.token_env")
+  if not var:match("^[%a_][%w_]*$") then return done(nil, "kumiko.token_env is not a variable name: " .. var) end
   if (os.getenv(var) or "") == "" then return done(nil, var .. " is not set in ranma's environment") end
-  local url = ranma.get("lattice.url"):gsub("/+$", "") .. path
+  local url = ranma.get("kumiko.url"):gsub("/+$", "") .. path
   -- printf is the shell's own, so the token goes down the pipe and never
   -- into an argument list `ps` would show.
   local script = [[printf 'header = "Authorization: Bearer %s"\n' "$]] .. var
@@ -227,12 +227,12 @@ local function with_cards(arg, done)
     cards(s, function(list, err, status)
       if list then return done(s, list) end
       if guessed and status == "404" then
-        return choose_board("lattice: no board " .. s .. "; which one?", function(b) go(b, false) end)
+        return choose_board("kumiko: no board " .. s .. "; which one?", function(b) go(b, false) end)
       end
       fail(s .. ": " .. err)
     end)
   end
-  if not slug then return choose_board("lattice: which board?", function(b) go(b, false) end) end
+  if not slug then return choose_board("kumiko: which board?", function(b) go(b, false) end) end
   go(slug, not named and not mapped)
 end
 
@@ -249,7 +249,7 @@ end
 local function pick(arg)
   local p = ranma.pane()
   with_cards(arg, function(slug, list)
-    if #list == 0 then return ranma.toast("lattice: nothing open on " .. slug) end
+    if #list == 0 then return ranma.toast("kumiko: nothing open on " .. slug) end
     local items = {}
     for _, c in ipairs(list) do
       items[#items + 1] = { label = str(c.title) or c.id, detail = (str(c.columnTitle) or "") .. "  " .. c.id, card = c }
@@ -273,7 +273,7 @@ local function pins() return store:get("pins") or {} end
 local function refresh(slug, force)
   if os.time() - shown > 10 or not slug or fetching[slug] then return end
   local c = bar[slug]
-  if c and not force and os.time() - c.at < ranma.get("lattice.refresh") then return end
+  if c and not force and os.time() - c.at < ranma.get("kumiko.refresh") then return end
   fetching[slug] = true
   fetch("/cards?board=" .. encode(slug) .. "&role=active&fields=title,columnTitle", function(data)
     fetching[slug] = nil
@@ -289,7 +289,7 @@ end
 
 local open_screen
 
-ranma.module("lattice", {
+ranma.module("kumiko", {
   interval = 2,
   render = function()
     shown = os.time()
@@ -303,7 +303,7 @@ ranma.module("lattice", {
     for _, k in ipairs(list) do
       if k.id == pin then card = k end
     end
-    local text = "◆ " .. cut(str(card.title) or card.id, ranma.get("lattice.width"))
+    local text = "◆ " .. cut(str(card.title) or card.id, ranma.get("kumiko.width"))
     if #list > 1 then text = text .. " +" .. (#list - 1) end
     return { text = text, style = card.id == pin and "accent" or "normal" }
   end,
@@ -327,7 +327,7 @@ end
 local function open_url(url)
   if ranma.client().remote then
     ranma.copy(url)
-    return ranma.toast("lattice: ranma runs elsewhere; copied the address instead")
+    return ranma.toast("kumiko: ranma runs elsewhere; copied the address instead")
   end
   ranma.spawn({ "xdg-open", url }, { timeout = 10 })
 end
@@ -438,14 +438,14 @@ local ROW_KEYS = {
         body = view(c), subtitle = c.id, filter = false,
         keys = {
           { "enter", "type it", function() close() type_ref(screen.pane, c) end },
-          { "y", "copy", function() ranma.copy(ref(c)) ranma.toast("lattice: copied " .. c.id) end },
+          { "y", "copy", function() ranma.copy(ref(c)) ranma.toast("kumiko: copied " .. c.id) end },
         },
       }
     end
   end },
   { "y", "copy", function(id)
     local c = by_id(id)
-    if c then ranma.copy(ref(c)) ranma.toast("lattice: copied " .. c.id) end
+    if c then ranma.copy(ref(c)) ranma.toast("kumiko: copied " .. c.id) end
   end },
   { "p", "pin", function(id)
     local all = pins()
@@ -462,14 +462,14 @@ local ROW_KEYS = {
 
 function show(slug, list)
   screen.slug, screen.list = slug, list
-  local t = { title = "lattice · " .. slug, body = body(ROW_KEYS),
+  local t = { title = "kumiko · " .. slug, body = body(ROW_KEYS),
               count = #list .. (#list == 1 and " card" or " cards") }
   if screen.s then return screen.s:set(t) end
   t.chip = "KANBAN"
   t.filter = "names"
   t.detail = 8
   t.options = true
-  t.group = "lattice"
+  t.group = "kumiko"
   t.empty = "nothing open on this board"
   t.keys = {
     { "r", "fetch", function()
@@ -505,14 +505,14 @@ local function complete()
   return boards
 end
 
-ranma.command("card", pick, { desc = "a Lattice card's reference, typed into the pane", args = "[board]", complete = complete })
-ranma.command("board", open_screen, { desc = "the Lattice board of this repository", args = "[board]", complete = complete })
+ranma.command("card", pick, { desc = "a Kumiko card's reference, typed into the pane", args = "[board]", complete = complete })
+ranma.command("board", open_screen, { desc = "the Kumiko board of this repository", args = "[board]", complete = complete })
 
--- For a key of your own: ranma.bind("<key>", function() ranma.emit("lattice_card") end),
--- with a board's slug as the data to name one; "lattice_board" for the screen.
+-- For a key of your own: ranma.bind("<key>", function() ranma.emit("kumiko_card") end),
+-- with a board's slug as the data to name one; "kumiko_board" for the screen.
 local function slug_of(data) return type(data) == "string" and data or nil end
-ranma.on("user:lattice_card", function(data) pick(slug_of(data)) end)
-ranma.on("user:lattice_board", function(data) open_screen(slug_of(data)) end)
+ranma.on("user:kumiko_card", function(data) pick(slug_of(data)) end)
+ranma.on("user:kumiko_board", function(data) open_screen(slug_of(data)) end)
 
 -- WM mode ends as the picker opens: it has the keyboard from there.
-ranma.bind("shift+k", function() pick() end, { desc = "lattice card", exit = true })
+ranma.bind("shift+k", function() pick() end, { desc = "kumiko card", exit = true })
