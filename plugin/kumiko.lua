@@ -67,16 +67,6 @@ local function cut(s, n)
   return s:sub(1, utf8.offset(s, n) - 1) .. "…"
 end
 
--- A field that is a string, else nil: a JSON null may decode to a sentinel
--- that is truthy, so `x or ""` is not enough.
-local function str(v)
-  return type(v) == "string" and v or nil
-end
-
-local function list_of(v)
-  return type(v) == "table" and v or {}
-end
-
 local function encode(s)
   return (s:gsub("[^%w%-%._~]", function(c) return ("%%%02X"):format(c:byte()) end))
 end
@@ -179,7 +169,7 @@ local function cards(slug, done)
   local function get(role, next)
     fetch("/cards?board=" .. encode(slug) .. "&role=" .. role .. "&fields=" .. FIELDS, function(data, err, status)
       if not data then return done(nil, err, status) end
-      next(list_of(data.cards))
+      next(data.cards or {})
     end)
   end
   get("active", function(active)
@@ -198,11 +188,11 @@ local function list_boards(done)
     if not data then return done(nil, err) end
     local items = {}
     boards = {}
-    for _, b in ipairs(list_of(data.boards)) do
-      local slug = str(b.slug)
+    for _, b in ipairs(data.boards or {}) do
+      local slug = b.slug
       if slug then
         boards[#boards + 1] = slug
-        items[#items + 1] = { label = str(b.name) or slug, detail = slug, slug = slug }
+        items[#items + 1] = { label = b.name or slug, detail = slug, slug = slug }
       end
     end
     done(items)
@@ -237,7 +227,7 @@ local function with_cards(arg, done)
 end
 
 local function ref(card)
-  return card.id .. ' ("' .. (str(card.title) or "") .. '")'
+  return card.id .. ' ("' .. (card.title or "") .. '")'
 end
 
 -- Types the reference into a pane, without Enter: the line is the user's to finish.
@@ -252,7 +242,7 @@ local function pick(arg)
     if #list == 0 then return ranma.toast("kumiko: nothing open on " .. slug) end
     local items = {}
     for _, c in ipairs(list) do
-      items[#items + 1] = { label = str(c.title) or c.id, detail = (str(c.columnTitle) or "") .. "  " .. c.id, card = c }
+      items[#items + 1] = { label = c.title or c.id, detail = (c.columnTitle or "") .. "  " .. c.id, card = c }
     end
     ranma.picker {
       title = slug,
@@ -278,7 +268,7 @@ local function refresh(slug, force)
   fetch("/cards?board=" .. encode(slug) .. "&role=active&fields=title,columnTitle", function(data)
     fetching[slug] = nil
     -- A failure is kept as nothing until the next refresh, not retried every tick.
-    bar[slug] = { at = os.time(), cards = data and list_of(data.cards) or {} }
+    bar[slug] = { at = os.time(), cards = data and data.cards or {} }
   end)
 end
 
@@ -303,7 +293,7 @@ ranma.module("kumiko", {
     for _, k in ipairs(list) do
       if k.id == pin then card = k end
     end
-    local text = "◆ " .. cut(str(card.title) or card.id, ranma.get("kumiko.width"))
+    local text = "◆ " .. cut(card.title or card.id, ranma.get("kumiko.width"))
     if #list > 1 then text = text .. " +" .. (#list - 1) end
     return { text = text, style = card.id == pin and "accent" or "normal" }
   end,
@@ -335,21 +325,21 @@ end
 -- A card's checklist: how many are done, and one line per item.
 local function checklist(c)
   local done, lines = 0, {}
-  for _, item in ipairs(list_of(c.checklist)) do
+  for _, item in ipairs(c.checklist or {}) do
     if item.done == true then done = done + 1 end
-    lines[#lines + 1] = (item.done == true and "✓ " or "· ") .. (str(item.text) or "")
+    lines[#lines + 1] = (item.done == true and "✓ " or "· ") .. (item.text or "")
   end
   return done, lines
 end
 
 local function label_names(c)
   local names = {}
-  for _, l in ipairs(list_of(c.labels)) do names[#names + 1] = str(l.name) or "?" end
+  for _, l in ipairs(c.labels or {}) do names[#names + 1] = l.name or "?" end
   return names
 end
 
 local function facts(c, names)
-  return { "facts", { "card", c.id }, { "column", str(c.columnTitle) or "" },
+  return { "facts", { "card", c.id }, { "column", c.columnTitle or "" },
     { "labels", #names > 0 and table.concat(names, ", ") or "none" } }
 end
 
@@ -358,7 +348,7 @@ end
 local function by_column(list)
   local order, groups = {}, {}
   for _, c in ipairs(list) do
-    local col = str(c.columnTitle) or ""
+    local col = c.columnTitle or ""
     if not groups[col] then
       groups[col] = {}
       order[#order + 1] = col
@@ -378,13 +368,13 @@ local function body(keys)
       local done, lines = checklist(c)
       local names = label_names(c)
       local detail = { facts(c, names) }
-      local desc = (str(c.description) or ""):gsub("%s+", " ")
+      local desc = (c.description or ""):gsub("%s+", " ")
       if desc ~= "" then detail[#detail + 1] = { "text", desc, max = 4 } end
       if #lines > 0 then
         detail[#detail + 1] = { "progress", label = "checklist", frac = done / #lines, num = done .. "/" .. #lines }
       end
       out[#out + 1] = {
-        "row", id = c.id, name = str(c.title) or c.id,
+        "row", id = c.id, name = c.title or c.id,
         mark = c.id == pinned and { "◆", "accent" } or nil,
         note = #names > 0 and table.concat(names, " ") or nil,
         value = #lines > 0 and { done .. "/" .. #lines, "dim" } or nil,
@@ -399,8 +389,8 @@ end
 -- One card whole: its description line by line, then its checklist.
 local function view(c)
   local done, lines = checklist(c)
-  local out = { { "heading", str(c.title) or c.id }, facts(c, label_names(c)), { "separator" } }
-  local desc = str(c.description) or ""
+  local out = { { "heading", c.title or c.id }, facts(c, label_names(c)), { "separator" } }
+  local desc = c.description or ""
   if desc == "" then
     out[#out + 1] = { "text", "No description.", "dim" }
   else
@@ -455,7 +445,7 @@ local ROW_KEYS = {
   end },
   { "w", "browser", function(id)
     local c = by_id(id)
-    local url = c and str(c.url)
+    local url = c and c.url
     if url then open_url(url) end
   end },
 }

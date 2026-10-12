@@ -14,7 +14,7 @@ https://github.com/masshirodev/ranma/blob/main/doc/CONFIG.md (`ranma --dump-type
 - It is read-only against the board, and stays so: only `GET`s. Test anything
   new against a fake server (`kumiko.url` pointed at it), never by changing
   cards on the real board.
-- Read a JSON field through `str()` or `list_of()`: ranma's `json.decode`
-  turns `null` into a userdata that is truthy, so `x or ""` does not catch it.
+- A JSON `null` decodes to `nil` (ranma 0.2.2 on), so `x or ""` reads an
+  absent or null field alike; there is no per-field type check to keep.
 - `AGENTS.local.md` (gitignored) carries what is true of one checkout on one
   machine. Never commit it.
