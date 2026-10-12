@@ -24,6 +24,8 @@ The bar module is not placed for you. Add it where you want it:
 ranma.bar { right = { "kumiko", "datetime" } }
 ```
 
+Add it only once the plugin is installed: a bar naming a module that no installed plugin declares makes every config reload fail.
+
 ## What it does
 
 ```text
