@@ -15,7 +15,8 @@
 -- (the pinned one, else the first), cut to kumiko.width, and `+N` for the
 -- others; a click opens the screen. It fetches when focus or a pane's
 -- directory moves to a repository it has not fetched, and every
--- kumiko.refresh seconds, only while the bar shows it, never per frame.
+-- kumiko.refresh seconds, only while the bar shows it, never per frame;
+-- what it fetched shows at once.
 --
 -- Another key: ranma.bind(KEY, function() ranma.emit("kumiko_card") end), or
 -- "kumiko_board" for the screen; a board's slug as emit's data names one.
@@ -27,6 +28,9 @@
 -- Read-only: it never creates, moves or edits a card. The API token is read
 -- from the environment variable kumiko.token_env and reaches curl on its
 -- stdin, never in a process's arguments.
+--
+-- Needs ranma 0.2.2 or newer, the first with ranma.refresh_module and with
+-- json.decode giving nil for null.
 --
 -- ranma's plugin API: https://github.com/masshirodev/ranma/blob/main/doc/CONFIG.md ("Pickers and
 -- prompts", "Screens", "Timers and processes", "The bar").
@@ -256,12 +260,16 @@ end
 
 local bar = {}       -- slug -> { at = os.time(), cards = { ... } }
 local fetching = {}
-local shown = 0      -- when the module last rendered: the bar shows it
+-- When the module last ticked. A module with an interval ticks only while the
+-- bar shows it, so a recent tick means it is shown; one without would render
+-- on every state change, shown or not.
+local shown = 0
+local TICK = 30
 
 local function pins() return store:get("pins") or {} end
 
 local function refresh(slug, force)
-  if os.time() - shown > 10 or not slug or fetching[slug] then return end
+  if os.time() - shown > TICK + 15 or not slug or fetching[slug] then return end
   local c = bar[slug]
   if c and not force and os.time() - c.at < ranma.get("kumiko.refresh") then return end
   fetching[slug] = true
@@ -269,6 +277,7 @@ local function refresh(slug, force)
     fetching[slug] = nil
     -- A failure is kept as nothing until the next refresh, not retried every tick.
     bar[slug] = { at = os.time(), cards = data and data.cards or {} }
+    ranma.refresh_module("kumiko")
   end)
 end
 
@@ -277,10 +286,18 @@ local function refresh_here()
   refresh(slug)
 end
 
+-- Focus or a directory moved: show the new repository's card from what is
+-- fetched, at once, and fetch it if it is stale.
+local function moved()
+  if os.time() - shown > TICK + 15 then return end
+  refresh_here()
+  ranma.refresh_module("kumiko")
+end
+
 local open_screen
 
 ranma.module("kumiko", {
-  interval = 2,
+  interval = TICK,
   render = function()
     shown = os.time()
     local _, slug = here()
@@ -300,8 +317,8 @@ ranma.module("kumiko", {
   on_click = function() open_screen() end,
 })
 
-ranma.on("focus_change", refresh_here)
-ranma.on("cwd_change", refresh_here)
+ranma.on("focus_change", moved)
+ranma.on("cwd_change", moved)
 ranma.every(30000, refresh_here)
 
 -- The screen ---------------------------------------------------------------
@@ -442,6 +459,7 @@ local ROW_KEYS = {
     all[screen.slug] = all[screen.slug] ~= id and id or nil
     store:set("pins", all)
     show(screen.slug, screen.list)
+    ranma.refresh_module("kumiko")
   end },
   { "w", "browser", function(id)
     local c = by_id(id)

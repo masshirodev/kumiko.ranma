@@ -16,7 +16,7 @@ Or by hand, as ranma loads any package under `pack/*/start/`:
 git clone https://github.com/masshirodev/kumiko.ranma ~/.config/ranma/pack/plugins/start/kumiko.ranma
 ```
 
-Needs: `curl` and `sh`, an API token for the Kanban API in the environment ranma's server starts with (`LATTICE_MCP_TOKEN` by default), and `xdg-open` for `w`.
+Needs: ranma 0.2.2 or newer (the first with `ranma.refresh_module`, and with `json.decode` giving `nil` for `null`), `curl` and `sh`, an API token for the Kanban API in the environment ranma's server starts with (`LATTICE_MCP_TOKEN` by default), and `xdg-open` for `w`.
 
 The bar module is not placed for you. Add it where you want it:
 
@@ -44,7 +44,8 @@ The bar: a module named `kumiko` shows the repository's In Progress card
 (the pinned one, else the first), cut to kumiko.width, and `+N` for the
 others; a click opens the screen. It fetches when focus or a pane's
 directory moves to a repository it has not fetched, and every
-kumiko.refresh seconds, only while the bar shows it, never per frame.
+kumiko.refresh seconds, only while the bar shows it, never per frame;
+what it fetched shows at once.
 
 Another key: ranma.bind(KEY, function() ranma.emit("kumiko_card") end), or
 "kumiko_board" for the screen; a board's slug as emit's data names one.
@@ -56,6 +57,9 @@ worktree counts as its main checkout. Pins are kept in ranma.store("kumiko").
 Read-only: it never creates, moves or edits a card. The API token is read
 from the environment variable kumiko.token_env and reaches curl on its
 stdin, never in a process's arguments.
+
+Needs ranma 0.2.2 or newer, the first with ranma.refresh_module and with
+json.decode giving nil for null.
 ```
 
 | Key or command | Where | Does |
