@@ -45,7 +45,9 @@
 -- picked there, or named (`card <board>`), for a pane whose repository names
 -- none (no .kumiko, no kumiko.boards) is that pane's from then on: the
 -- picker, the screen, the bar, ctrl+click and the tooltip all use it, until
--- the pane closes or the server restarts; naming another changes it.
+-- the pane closes or the server restarts. `pane-board` in the palette
+-- changes it (a picker, or `pane-board <board>`), and `pane-board -`
+-- forgets it.
 -- A worktree counts as its main checkout; a `.git` that is not a repository
 -- (a stub directory with no HEAD) does not count, and the search goes on
 -- above it. Pins are kept in ranma.store("kumiko").
@@ -212,6 +214,15 @@ local function remember(p, slug)
   chosen[k] = slug
   keep_chosen()
   ranma.refresh_module("kumiko")
+end
+
+local function forget(p)
+  local k = p and tostring(p.id)
+  if not (k and chosen[k]) then return false end
+  chosen[k] = nil
+  keep_chosen()
+  ranma.refresh_module("kumiko")
+  return true
 end
 
 ranma.on("pane_close", function(e)
@@ -621,7 +632,53 @@ local function complete()
 end
 
 ranma.command("card", pick, { desc = "a Kumiko card's reference, typed into the pane", args = "[board]", complete = complete })
+-- Sets, changes or forgets the board picked for the focused pane. A pane
+-- whose repository names its board (.kumiko, kumiko.boards) has nothing to
+-- pick: that is changed where it is named.
+local function pane_board(arg)
+  local p, slug, _, own = here()
+  if not p then return end
+  if own then
+    return ranma.toast("kumiko: this repository names its board (" .. slug .. "): change its .kumiko or kumiko.boards")
+  end
+  local mine = chosen[tostring(p.id)]
+  local function set(b)
+    remember(p, b)
+    ranma.toast("kumiko: this pane's board is " .. b)
+  end
+  local named = arg and arg:match("^%s*(%S+)")
+  if named == "-" then
+    if not forget(p) then return ranma.toast("kumiko: no board was picked for this pane") end
+    return ranma.toast("kumiko: forgot this pane's board" .. (slug ~= mine and slug and ", back to " .. slug or ""))
+  end
+  list_boards(function(items, err)
+    if not items then return fail(err) end
+    if named then
+      for _, b in ipairs(boards) do
+        if b == named then return set(b) end
+      end
+      return fail("no board " .. named)
+    end
+    if mine then
+      table.insert(items, 1, { label = "forget it", detail = "back to " .. (repo_of(p:cwd()) and repo_of(p:cwd()).name or "asking"), forget = true })
+    end
+    ranma.picker {
+      title = "kumiko: this pane's board" .. (mine and " (now " .. mine .. ")" or ""),
+      items = items,
+      on_select = function(item)
+        if item.forget then return pane_board("-") end
+        set(item.slug)
+      end,
+    }
+  end)
+end
+
 ranma.command("board", open_screen, { desc = "the Kumiko board of this repository", args = "[board]", complete = complete })
+ranma.command("pane-board", pane_board, { desc = "pick, change or forget (-) the Kumiko board of this pane", args = "[board|-]", complete = function()
+  local out = { "-" }
+  for _, b in ipairs(complete()) do out[#out + 1] = b end
+  return out
+end })
 
 -- For a key of your own: ranma.bind("<key>", function() ranma.emit("kumiko_card") end),
 -- with a board's slug as the data to name one; "kumiko_board" for the screen.

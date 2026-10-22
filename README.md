@@ -76,7 +76,9 @@ repository's name, and with none the picker asks which board. A board
 picked there, or named (`card <board>`), for a pane whose repository names
 none (no .kumiko, no kumiko.boards) is that pane's from then on: the
 picker, the screen, the bar, ctrl+click and the tooltip all use it, until
-the pane closes or the server restarts; naming another changes it.
+the pane closes or the server restarts. `pane-board` in the palette
+changes it (a picker, or `pane-board <board>`), and `pane-board -`
+forgets it.
 A worktree counts as its main checkout; a `.git` that is not a repository
 (a stub directory with no HEAD) does not count, and the search goes on
 above it. Pins are kept in ranma.store("kumiko").
@@ -93,6 +95,7 @@ json.decode giving nil for null.
 | `leader K` (`shift+k`) | WM mode | The picker over this repository's board. |
 | `card [board]` | palette (`leader :`) | The same picker, on another board when named. |
 | `board [board]` | palette | The screen of the board's cards. |
+| `pane-board [board\|-]` | palette | Pick or change the board of this pane (when its repository names none); `-` forgets it. |
 | `enter` `v` `y` `p` `w` `r` | the screen | Type the reference, view the card, copy, pin, browser, fetch again. |
 | `ctrl+click` a card id | a pane's text | The card on a screen of its own (or the browser, with `kumiko.click`). |
 | `ctrl+right-click` a card id | a pane's text | View, browser, type the reference, copy the reference, id or address. |
@@ -109,7 +112,7 @@ board = work-hours
 
 Commit it when the board is the repository's for everyone; add it to `.git/info/exclude` when it is yours alone. A worktree reads its own, or its main checkout's when it has none (an untracked one is not copied into a worktree). The file is read each time, so an edit counts at once.
 
-Where there is no `.kumiko` and no `kumiko.boards` entry (a directory outside any repository, or one whose name is not a board), the board you pick when asked, or name with `card <board>` / `board <board>`, is kept for that pane. It lives in `ranma.store("kumiko")` under the server's pid and start time, so it survives a reload, is forgotten when the pane closes, and never carries over to another server or a restarted one, whose pane ids start over.
+Where there is no `.kumiko` and no `kumiko.boards` entry (a directory outside any repository, or one whose name is not a board), the board you pick when asked, or name with `card <board>` / `board <board>`, is kept for that pane; `pane-board` changes it, `pane-board -` forgets it. It lives in `ranma.store("kumiko")` under the server's pid and start time, so it survives a reload, is forgotten when the pane closes, and never carries over to another server or a restarted one, whose pane ids start over.
 
 To put the picker on another key, drop the default and emit the plugin's event (`kumiko_board` opens the screen; a board's slug as the data names one):
 
