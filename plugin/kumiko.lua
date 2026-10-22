@@ -41,9 +41,14 @@
 -- `board = <slug>` (in a worktree, its own or its main checkout's); else
 -- kumiko.boards, mapping a repository's directory name to a board slug
 -- (`kumiko=work-hours *.ranma=ranma`); else the board whose slug is the
--- repository's name, and with none the picker asks which board. A worktree
--- counts as its main checkout; a `.git` that is not a repository (a stub
--- directory with no HEAD) does not count, and the search goes on above it. Pins are kept in ranma.store("kumiko").
+-- repository's name, and with none the picker asks which board. A board
+-- picked there, or named (`card <board>`), for a pane whose repository names
+-- none (no .kumiko, no kumiko.boards) is that pane's from then on: the
+-- picker, the screen, the bar, ctrl+click and the tooltip all use it, until
+-- the pane closes or the server restarts; naming another changes it.
+-- A worktree counts as its main checkout; a `.git` that is not a repository
+-- (a stub directory with no HEAD) does not count, and the search goes on
+-- above it. Pins are kept in ranma.store("kumiko").
 -- Read-only: it never creates, moves or edits a card. The API token is read
 -- from the environment variable kumiko.token_env and reaches curl on its
 -- stdin, never in a process's arguments.
@@ -176,14 +181,60 @@ local function board_for(repo)
   return repo.name, false
 end
 
--- A pane (the focused one by default), its board's slug and whether that was
--- named, or nil.
+-- The board picked for a pane whose directory names none, by its id: kept
+-- in the store, so a reload keeps it, under this server's pid and start time,
+-- so another server, or this one restarted, whose pane ids start over, does
+-- not inherit it. Without /proc it is kept in memory only.
+local SERVER = (function()
+  local stat = read("/proc/self/stat")
+  local after = stat and stat:match("%) (.*)$")
+  if not after then return nil end
+  local f = {}
+  for w in after:gmatch("%S+") do f[#f + 1] = w end
+  return f[20] and stat:match("^%d+") .. "-" .. f[20]
+end)()
+
+local chosen = {}
+do
+  local saved = SERVER and store:get("chosen")
+  if type(saved) == "table" and saved.server == SERVER and type(saved.panes) == "table" then
+    chosen = saved.panes
+  end
+end
+
+local function keep_chosen()
+  if SERVER then store:set("chosen", { server = SERVER, panes = chosen }) end
+end
+
+local function remember(p, slug)
+  local k = p and tostring(p.id)
+  if not k or chosen[k] == slug then return end
+  chosen[k] = slug
+  keep_chosen()
+  ranma.refresh_module("kumiko")
+end
+
+ranma.on("pane_close", function(e)
+  local k = tostring(e.pane)
+  if chosen[k] then chosen[k] = nil keep_chosen() end
+end)
+
+-- A pane (the focused one by default), its board's slug, whether that was
+-- named rather than guessed, and whether its own repository named it (a
+-- .kumiko or kumiko.boards, which a board picked for the pane does not
+-- override); or nil.
 local function here(p)
   p = p or ranma.pane()
   if not p then return nil end
   local repo = repo_of(p:cwd())
-  if not repo then return p end
-  return p, board_for(repo)
+  if repo then
+    local slug, own = board_for(repo)
+    if own then return p, slug, true, true end
+  end
+  local mine = chosen[tostring(p.id)]
+  if mine then return p, mine, true, false end
+  if repo then return p, repo.name, false, false end
+  return p
 end
 
 -- GET a path under kumiko.url; done(data) or done(nil, why, status).
@@ -266,19 +317,24 @@ end
 local function with_cards(arg, done)
   if #boards == 0 then list_boards(function() end) end
   local named = arg and arg:match("^%s*(%S+)")
-  local _, slug, mapped = here()
+  local p, slug, known, own = here()
   slug = named or slug
-  local function go(s, guessed)
+  -- A board picked or named for a pane its repository names none for is the
+  -- pane's from then on, once it is known to exist.
+  local function go(s, guessed, keep)
     cards(s, function(list, err, status)
-      if list then return done(s, list) end
+      if list then
+        if keep and not own then remember(p, s) end
+        return done(s, list)
+      end
       if guessed and status == "404" then
-        return choose_board("kumiko: no board " .. s .. "; which one?", function(b) go(b, false) end)
+        return choose_board("kumiko: no board " .. s .. "; which one?", function(b) go(b, false, true) end)
       end
       fail(s .. ": " .. err)
     end)
   end
-  if not slug then return choose_board("kumiko: which board?", function(b) go(b, false) end) end
-  go(slug, not named and not mapped)
+  if not slug then return choose_board("kumiko: which board?", function(b) go(b, false, true) end) end
+  go(slug, not named and not known, named ~= nil)
 end
 
 local function ref(card)
@@ -687,18 +743,19 @@ ranma.on("click", function(e)
   if e.button ~= "left" and e.button ~= "right" then return end
   local p, num = card_under(e)
   if not p then return end
-  local _, slug, named = here(p)
-  local function go(s, guessed)
+  local _, slug, named, own = here(p)
+  local function go(s, guessed, keep)
     find_card(s, num, function(c, err, status)
+      if c ~= nil and keep and not own then remember(p, s) end
       if c then return on_card(e, p, c) end
       if c == false then return ranma.toast("kumiko: no card " .. num .. " on " .. s) end
       if guessed and status == "404" then
-        return choose_board("kumiko: no board " .. s .. "; where is " .. num .. "?", function(b) go(b, false) end)
+        return choose_board("kumiko: no board " .. s .. "; where is " .. num .. "?", function(b) go(b, false, true) end)
       end
       fail(s .. ": " .. err)
     end)
   end
-  if not slug then return choose_board("kumiko: which board is " .. num .. " on?", function(b) go(b, false) end) end
+  if not slug then return choose_board("kumiko: which board is " .. num .. " on?", function(b) go(b, false, true) end) end
   go(slug, not named)
 end)
 
@@ -757,7 +814,7 @@ ranma.on("hover", function(e)
   local _, slug = here(p)
   if not slug then
     resting = nil
-    return note(at, num, "no board for this directory: ctrl+click to choose, or add a .kumiko")
+    return note(at, num, "no board here: ctrl+click picks one for this pane, or add a .kumiko")
   end
   local key = slug .. " " .. num
   resting, rest_at = key, at

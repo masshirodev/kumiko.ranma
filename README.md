@@ -72,9 +72,14 @@ Which board: a `.kumiko` file at the repository's top saying
 `board = <slug>` (in a worktree, its own or its main checkout's); else
 kumiko.boards, mapping a repository's directory name to a board slug
 (`kumiko=work-hours *.ranma=ranma`); else the board whose slug is the
-repository's name, and with none the picker asks which board. A worktree
-counts as its main checkout; a `.git` that is not a repository (a stub
-directory with no HEAD) does not count, and the search goes on above it. Pins are kept in ranma.store("kumiko").
+repository's name, and with none the picker asks which board. A board
+picked there, or named (`card <board>`), for a pane whose repository names
+none (no .kumiko, no kumiko.boards) is that pane's from then on: the
+picker, the screen, the bar, ctrl+click and the tooltip all use it, until
+the pane closes or the server restarts; naming another changes it.
+A worktree counts as its main checkout; a `.git` that is not a repository
+(a stub directory with no HEAD) does not count, and the search goes on
+above it. Pins are kept in ranma.store("kumiko").
 Read-only: it never creates, moves or edits a card. The API token is read
 from the environment variable kumiko.token_env and reaches curl on its
 stdin, never in a process's arguments.
@@ -103,6 +108,8 @@ board = work-hours
 ```
 
 Commit it when the board is the repository's for everyone; add it to `.git/info/exclude` when it is yours alone. A worktree reads its own, or its main checkout's when it has none (an untracked one is not copied into a worktree). The file is read each time, so an edit counts at once.
+
+Where there is no `.kumiko` and no `kumiko.boards` entry (a directory outside any repository, or one whose name is not a board), the board you pick when asked, or name with `card <board>` / `board <board>`, is kept for that pane. It lives in `ranma.store("kumiko")` under the server's pid and start time, so it survives a reload, is forgotten when the pane closes, and never carries over to another server or a restarted one, whose pane ids start over.
 
 To put the picker on another key, drop the default and emit the plugin's event (`kumiko_board` opens the screen; a board's slug as the data names one):
 
