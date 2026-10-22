@@ -52,10 +52,26 @@ what it fetched shows at once.
 Another key: ranma.bind(KEY, function() ranma.emit("kumiko_card") end), or
 "kumiko_board" for the screen; a board's slug as emit's data names one.
 
-Which board: kumiko.boards maps a repository's directory name to a board
-slug (`kumiko=work-hours *.ranma=ranma`); any other repository uses the
-board whose slug is its name, and with none the picker asks which board. A
-worktree counts as its main checkout. Pins are kept in ranma.store("kumiko").
+A card id in a pane's text (`c2462`, or the whole `c2462-tests-leave-…`),
+as openpath.ranma treats a path, on the board of that pane's repository:
+  ctrl+click         the card whole on a screen (enter types the reference,
+                     y copies it, w opens the browser), or the browser
+                     itself when kumiko.click says so.
+  ctrl+right-click   a list: view it, the browser, type the reference into
+                     the pane, copy the reference, the id or the address.
+  hover              a tooltip: the title, the column, labels, checklist
+                     (kumiko.hover; needs the mouse on, the `mouse`
+                     setting not "off"). It fetches a card once per
+                     kumiko.refresh and never asks which board.
+A link, or a word that is a file in the pane's directory, is left to
+openpath and linkhover. Alt+click works the same as Ctrl+click.
+
+Which board: a `.kumiko` file at the repository's top saying
+`board = <slug>` (in a worktree, its own or its main checkout's); else
+kumiko.boards, mapping a repository's directory name to a board slug
+(`kumiko=work-hours *.ranma=ranma`); else the board whose slug is the
+repository's name, and with none the picker asks which board. A worktree
+counts as its main checkout. Pins are kept in ranma.store("kumiko").
 Read-only: it never creates, moves or edits a card. The API token is read
 from the environment variable kumiko.token_env and reaches curl on its
 stdin, never in a process's arguments.
@@ -70,6 +86,20 @@ json.decode giving nil for null.
 | `card [board]` | palette (`leader :`) | The same picker, on another board when named. |
 | `board [board]` | palette | The screen of the board's cards. |
 | `enter` `v` `y` `p` `w` `r` | the screen | Type the reference, view the card, copy, pin, browser, fetch again. |
+| `ctrl+click` a card id | a pane's text | The card on a screen of its own (or the browser, with `kumiko.click`). |
+| `ctrl+right-click` a card id | a pane's text | View, browser, type the reference, copy the reference, id or address. |
+| hover a card id | a pane's text | A tooltip with its title, column, labels and checklist. |
+
+## Which board: `.kumiko`
+
+A repository names its board in a `.kumiko` file at its top, which beats both `kumiko.boards` and the guess from the directory's name:
+
+```ini
+# the Kanban board this repository's cards are on
+board = work-hours
+```
+
+Commit it when the board is the repository's for everyone; add it to `.git/info/exclude` when it is yours alone. A worktree reads its own, or its main checkout's when it has none (an untracked one is not copied into a worktree). The file is read each time, so an edit counts at once.
 
 To put the picker on another key, drop the default and emit the plugin's event (`kumiko_board` opens the screen; a board's slug as the data names one):
 
@@ -88,11 +118,13 @@ In ranma's settings panel under `kumiko`, or with hako's `opts` (`{ "masshirodev
 | `kumiko.token_env` | `LATTICE_MCP_TOKEN` | The environment variable holding the API token, in the environment ranma's server started with. It keeps the app's old name on purpose: that is the variable Kumiko's own tooling sets. |
 | `kumiko.boards` | `kumiko=work-hours wayfarer=main kuji=rents-due hansei=heimdall kizuna=ai-session *.ranma=ranma` | `repository=board` pairs, space-separated; `*.suffix` matches the end of a name. Any other repository uses the board named like it. |
 | `kumiko.refresh` | `300` | Seconds between the bar's fetches of a board. |
+| `kumiko.click` | `view` | What ctrl+click on a card id does: `view` the card in ranma, or open it in the `browser`. |
+| `kumiko.hover` | `true` | A tooltip with a card's title, column, labels and checklist when the pointer rests on its id. |
 | `kumiko.width` | `32` | The most characters of a card's title the bar shows. |
 
 ## How it talks to the API
 
-Every request is `curl` started with `ranma.spawn`, so nothing waits on the network inside a bind or the bar. It only sends `GET /boards` and `GET /cards?board=<slug>&role=...&fields=...`. The token is written by the shell's own `printf` into curl's `--config -` on stdin, so it is never in an argument list that `ps` shows.
+Every request is `curl` started with `ranma.spawn`, so nothing waits on the network inside a bind or the bar. It only sends `GET /boards`, `GET /cards?board=<slug>&role=...&fields=...`, and, for a card id clicked or hovered, `GET /cards?board=<slug>&q=<id>&fields=...` (the API reads one card by its whole id only, so a short `c2462` is found by search, which covers every column). The token is written by the shell's own `printf` into curl's `--config -` on stdin, so it is never in an argument list that `ps` shows.
 
 ## License
 

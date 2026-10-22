@@ -21,10 +21,26 @@
 -- Another key: ranma.bind(KEY, function() ranma.emit("kumiko_card") end), or
 -- "kumiko_board" for the screen; a board's slug as emit's data names one.
 --
--- Which board: kumiko.boards maps a repository's directory name to a board
--- slug (`kumiko=work-hours *.ranma=ranma`); any other repository uses the
--- board whose slug is its name, and with none the picker asks which board. A
--- worktree counts as its main checkout. Pins are kept in ranma.store("kumiko").
+-- A card id in a pane's text (`c2462`, or the whole `c2462-tests-leave-…`),
+-- as openpath.ranma treats a path, on the board of that pane's repository:
+--   ctrl+click         the card whole on a screen (enter types the reference,
+--                      y copies it, w opens the browser), or the browser
+--                      itself when kumiko.click says so.
+--   ctrl+right-click   a list: view it, the browser, type the reference into
+--                      the pane, copy the reference, the id or the address.
+--   hover              a tooltip: the title, the column, labels, checklist
+--                      (kumiko.hover; needs the mouse on, the `mouse`
+--                      setting not "off"). It fetches a card once per
+--                      kumiko.refresh and never asks which board.
+-- A link, or a word that is a file in the pane's directory, is left to
+-- openpath and linkhover. Alt+click works the same as Ctrl+click.
+--
+-- Which board: a `.kumiko` file at the repository's top saying
+-- `board = <slug>` (in a worktree, its own or its main checkout's); else
+-- kumiko.boards, mapping a repository's directory name to a board slug
+-- (`kumiko=work-hours *.ranma=ranma`); else the board whose slug is the
+-- repository's name, and with none the picker asks which board. A worktree
+-- counts as its main checkout. Pins are kept in ranma.store("kumiko").
 -- Read-only: it never creates, moves or edits a card. The API token is read
 -- from the environment variable kumiko.token_env and reaches curl on its
 -- stdin, never in a process's arguments.
@@ -51,6 +67,14 @@ ranma.option("kumiko.boards", {
 ranma.option("kumiko.refresh", {
   type = "int", min = 30, max = 3600, step = 30, default = 300, slider = false,
   name = "Refresh", desc = "Seconds between the bar's fetches of a board.",
+})
+ranma.option("kumiko.click", {
+  type = "enum", choices = { "view", "browser" }, default = "view",
+  name = "Ctrl+click", desc = "What ctrl+click on a card id does: show the card in ranma, or open it in the browser.",
+})
+ranma.option("kumiko.hover", {
+  type = "bool", default = true,
+  name = "Card tooltips", desc = "A tooltip with a card's title, column, labels and checklist when the pointer rests on its id.",
 })
 ranma.option("kumiko.width", {
   type = "int", min = 8, max = 80, default = 32,
@@ -97,38 +121,58 @@ local function repo_of(cwd)
   if not cwd then return nil end
   local known = repos[cwd]
   if known ~= nil then return known or nil end
-  local dir, name = cwd, false
+  local dir, found = cwd, false
   while dir ~= "" do
     local git = dir .. "/.git"
     if exists(git) then
       -- A worktree's .git is a file pointing into its main checkout's .git.
       local text = read(git)
       local main = text and text:match("gitdir:%s*(.-)/%.git/worktrees/")
-      name = (main or dir):match("[^/]+$") or false
+      local name = (main or dir):match("[^/]+$")
+      found = name and { name = name, dirs = { dir, main } } or false
       break
     end
     dir = dir:match("^(.*)/[^/]*$") or ""
   end
-  repos[cwd] = name
-  return name or nil
+  repos[cwd] = found
+  return found or nil
 end
 
--- The board slug for a repository, and whether kumiko.boards named it.
+-- The board a repository's `.kumiko` names (`board = slug`), in the checkout
+-- or, for a worktree that lacks one (it may be untracked), in its main
+-- checkout. Read every time, not cached, so an edit counts at once.
+local function board_file(repo)
+  for _, dir in ipairs(repo.dirs) do
+    local text = read(dir .. "/.kumiko")
+    if text then
+      for line in (text .. "\n"):gmatch("(.-)\r?\n") do
+        local slug = line:match("^%s*board%s*=%s*([^%s#]+)")
+        if slug then return slug end
+      end
+    end
+  end
+end
+
+-- The board slug for a repository, and whether it was named rather than
+-- guessed: by its `.kumiko`, else by kumiko.boards, else its own name.
 local function board_for(repo)
+  local named = board_file(repo)
+  if named then return named, true end
   local suffixed
   for pair in ranma.get("kumiko.boards"):gmatch("%S+") do
     local key, slug = pair:match("^(.-)=(.+)$")
-    if key == repo then return slug, true end
+    if key == repo.name then return slug, true end
     local tail = key and key:match("^%*(.+)$")
-    if tail and not suffixed and #repo > #tail and repo:sub(-#tail) == tail then suffixed = slug end
+    if tail and not suffixed and #repo.name > #tail and repo.name:sub(-#tail) == tail then suffixed = slug end
   end
   if suffixed then return suffixed, true end
-  return repo, false
+  return repo.name, false
 end
 
--- The focused pane, its board's slug and whether that was mapped, or nil.
-local function here()
-  local p = ranma.pane()
+-- A pane (the focused one by default), its board's slug and whether that was
+-- named, or nil.
+local function here(p)
+  p = p or ranma.pane()
   if not p then return nil end
   local repo = repo_of(p:cwd())
   if not repo then return p end
@@ -524,3 +568,184 @@ ranma.on("user:kumiko_board", function(data) open_screen(slug_of(data)) end)
 
 -- WM mode ends as the picker opens: it has the keyboard from there.
 ranma.bind("shift+k", function() pick() end, { desc = "kumiko card", exit = true })
+
+-- Ctrl+click and hover on a card id -----------------------------------------
+
+-- What a card id is made of, and what may stand around one in a line.
+local IDCHAR = "[%w%-_./:#~]"
+
+-- The card number (`c2462`) of the id around column `col` (0-based) of
+-- `text`, from `c2462` or the whole `c2462-tests-leave-their-temp`; the word
+-- it was read from; and the word's first column and width. nil when the word
+-- there is anything else (a path with a card-like piece in it is not one).
+local function card_at(text, col)
+  -- Columns count characters, the string bytes: an arrow or a box drawing
+  -- earlier in the line would put a byte index off.
+  local i = utf8.offset(text, col + 1)
+  if not i or i > #text or not text:sub(i, i):match(IDCHAR) then return nil end
+  local a, b = i, i
+  while a > 1 and text:sub(a - 1, a - 1):match(IDCHAR) do a = a - 1 end
+  while b < #text and text:sub(b + 1, b + 1):match(IDCHAR) do b = b + 1 end
+  local w = text:sub(a, b)
+  local lead = #w:match("^#*")
+  w = w:sub(lead + 1):gsub("[.,:;]+$", "")
+  local num = w:match("^(c%d+)$") or w:match("^(c%d+)%-[%w%-]+$")
+  if not num then return nil end
+  return num, w, (utf8.len(text:sub(1, a + lead - 1)) or a + lead - 1), #w
+end
+
+-- The card id under a click or a hover, and its pane: nil on a link and on a
+-- word that is a file in the pane's directory, which openpath (and linkhover)
+-- answer. Every hook hears the event, so this one keeps off theirs.
+local function card_under(e)
+  local p = ranma.pane(e.pane)
+  if not p or p:link_at(e.line, e.col) then return nil end
+  local text = p:lines(e.line, e.line)[1]
+  local num, word, col, span = card_at(text or "", e.col)
+  if not num then return nil end
+  local cwd = p:cwd()
+  if cwd and exists(cwd .. "/" .. word) then return nil end
+  return p, num, col, span
+end
+
+-- Cards found by number, per board, for the tooltip: slug .. " " .. num ->
+-- { at = os.time(), card = card or false }. A click always fetches again.
+local found = {}
+local finding = {}
+
+-- The card numbered `num` on board `slug`: the API reads a card by its whole
+-- id only, so this searches the board, whose search covers every column, the
+-- done ones too, and keeps the card whose id is that number. done(card), or
+-- done(nil, why, status); a board that has no such card is done(false).
+local function find_card(slug, num, done)
+  local key = slug .. " " .. num
+  local path = "/cards?board=" .. encode(slug) .. "&q=" .. encode(num) .. "&fields=" .. FIELDS
+  fetch(path, function(data, err, status)
+    if not data then return done(nil, err, status) end
+    local card = false
+    for _, c in ipairs(data.cards or {}) do
+      if c.id == num or c.id:sub(1, #num + 1) == num .. "-" then card = c break end
+    end
+    found[key] = { at = os.time(), card = card }
+    done(card)
+  end)
+end
+
+local function copy_ref(c)
+  ranma.copy(ref(c))
+  ranma.toast("kumiko: copied " .. c.id)
+end
+
+-- The card whole on a screen of its own, as `v` shows it from the board.
+local function view_card(p, c)
+  local s
+  s = ranma.screen {
+    title = "kumiko · " .. c.id, chip = "KANBAN", filter = false, group = "kumiko",
+    body = view(c),
+    keys = {
+      { "enter", "type it", function() s:close() type_ref(p, c) end },
+      { "y", "copy", function() copy_ref(c) end },
+      { "w", "browser", function() if c.url then open_url(c.url) end end },
+    },
+  }
+end
+
+local function on_card(e, p, c)
+  if e.button == "left" then
+    if ranma.get("kumiko.click") == "browser" and c.url then return open_url(c.url) end
+    return view_card(p, c)
+  end
+  ranma.picker {
+    title = ref(c),
+    items = {
+      { label = "view the card", detail = c.columnTitle, act = "view" },
+      { label = "open it in the browser", detail = c.url, act = "browser" },
+      { label = "type the reference into the pane", detail = ref(c), act = "type" },
+      { label = "copy the reference", act = "copy" },
+      { label = "copy the id", detail = c.id, act = "id" },
+      { label = "copy the address", act = "url" },
+    },
+    on_select = function(item)
+      if item.act == "view" then view_card(p, c)
+      elseif item.act == "browser" then if c.url then open_url(c.url) end
+      elseif item.act == "type" then type_ref(p, c)
+      elseif item.act == "copy" then copy_ref(c)
+      elseif item.act == "id" then ranma.copy(c.id) ranma.toast("kumiko: copied " .. c.id)
+      elseif item.act == "url" then ranma.copy(c.url or "") ranma.toast("kumiko: copied " .. (c.url or "nothing")) end
+    end,
+  }
+end
+
+ranma.on("click", function(e)
+  if e.button ~= "left" and e.button ~= "right" then return end
+  local p, num = card_under(e)
+  if not p then return end
+  local _, slug, named = here(p)
+  local function go(s, guessed)
+    find_card(s, num, function(c, err, status)
+      if c then return on_card(e, p, c) end
+      if c == false then return ranma.toast("kumiko: no card " .. num .. " on " .. s) end
+      if guessed and status == "404" then
+        return choose_board("kumiko: no board " .. s .. "; where is " .. num .. "?", function(b) go(b, false) end)
+      end
+      fail(s .. ": " .. err)
+    end)
+  end
+  if not slug then return choose_board("kumiko: which board is " .. num .. " on?", function(b) go(b, false) end) end
+  go(slug, not named)
+end)
+
+-- Where the pointer rests now, so a card that arrives after it moved on is
+-- not shown where it no longer is.
+local resting = nil
+-- Whether the tooltip up is this plugin's: only that one is taken down, so
+-- linkhover's (or another's) on the same hover is left standing.
+local tipped = false
+
+local function tooltip(at, c)
+  local done, lines = checklist(c)
+  local names = label_names(c)
+  local facts = { { c.columnTitle or "", "accent" } }
+  if #names > 0 then facts[#facts + 1] = { "  " .. table.concat(names, ", "), "dim" } end
+  if #lines > 0 then facts[#facts + 1] = { "  ✓ " .. done .. "/" .. #lines, "dim" } end
+  tipped = true
+  ranma.tooltip(at, {
+    title = c.id,
+    lines = { { { cut(c.title or c.id, 72), "normal", strong = true } }, facts },
+    keys = { { "ctrl+click", ranma.get("kumiko.click") == "browser" and "browser" or "view" },
+             { "ctrl+right-click", "more" } },
+  })
+end
+
+-- A tooltip never asks which board: with none named or guessed right, it
+-- shows nothing. It fetches a card once per kumiko.refresh, and the hover
+-- that waits on it is the one that shows it.
+ranma.on("hover", function(e)
+  if not ranma.get("kumiko.hover") then return end
+  local p, num, col, span = card_under(e)
+  if not p then
+    resting = nil
+    if tipped then tipped = false ranma.tooltip(nil) end
+    return
+  end
+  local _, slug = here(p)
+  if not slug then return end
+  local key = slug .. " " .. num
+  local at = { pane = e.pane, line = e.line, col = col, span = span }
+  resting = key .. " " .. e.pane .. " " .. e.line .. " " .. col
+  local here_now = resting
+  local known = found[key]
+  if known and os.time() - known.at < ranma.get("kumiko.refresh") then
+    if known.card then tooltip(at, known.card) end
+    return
+  end
+  if finding[key] then return end
+  finding[key] = true
+  find_card(slug, num, function(c, _, status)
+    finding[key] = nil
+    -- A failed fetch (no board, no token) is remembered as nothing too, so
+    -- resting on the id does not ask again on every cell.
+    if c == nil then found[key] = { at = os.time(), card = false, status = status } end
+    if c and resting == here_now then tooltip(at, c) end
+  end)
+end)
