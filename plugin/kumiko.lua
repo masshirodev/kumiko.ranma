@@ -30,8 +30,10 @@
 --                      the pane, copy the reference, the id or the address.
 --   hover              a tooltip: the title, the column, labels, checklist
 --                      (kumiko.hover; needs the mouse on, the `mouse`
---                      setting not "off"). It fetches a card once per
---                      kumiko.refresh and never asks which board.
+--                      setting not "off"). It shows at once: "fetching"
+--                      until the card lands, then the card, "not on
+--                      <board>", or why the fetch failed. It fetches a card
+--                      once per kumiko.refresh and never asks which board.
 -- A link, or a word that is a file in the pane's directory, is left to
 -- openpath and linkhover. Alt+click works the same as Ctrl+click.
 --
@@ -40,7 +42,8 @@
 -- kumiko.boards, mapping a repository's directory name to a board slug
 -- (`kumiko=work-hours *.ranma=ranma`); else the board whose slug is the
 -- repository's name, and with none the picker asks which board. A worktree
--- counts as its main checkout. Pins are kept in ranma.store("kumiko").
+-- counts as its main checkout; a `.git` that is not a repository (a stub
+-- directory with no HEAD) does not count, and the search goes on above it. Pins are kept in ranma.store("kumiko").
 -- Read-only: it never creates, moves or edits a card. The API token is read
 -- from the environment variable kumiko.token_env and reaches curl on its
 -- stdin, never in a process's arguments.
@@ -124,10 +127,14 @@ local function repo_of(cwd)
   local dir, found = cwd, false
   while dir ~= "" do
     local git = dir .. "/.git"
-    if exists(git) then
-      -- A worktree's .git is a file pointing into its main checkout's .git.
-      local text = read(git)
-      local main = text and text:match("gitdir:%s*(.-)/%.git/worktrees/")
+    -- A worktree's .git is a file pointing into its main checkout's .git; a
+    -- checkout's is a directory with a HEAD. Anything else named .git (a stub
+    -- with only hooks/ in it, as a home directory can carry) is not a
+    -- repository, and the search goes on above it.
+    local text = exists(git) and read(git)
+    local wt = text and text:match("^gitdir:")
+    if wt or exists(git .. "/HEAD") then
+      local main = wt and text:match("gitdir:%s*(.-)/%.git/worktrees/")
       local name = (main or dir):match("[^/]+$")
       found = name and { name = name, dirs = { dir, main } } or false
       break
@@ -695,12 +702,18 @@ ranma.on("click", function(e)
   go(slug, not named)
 end)
 
--- Where the pointer rests now, so a card that arrives after it moved on is
--- not shown where it no longer is.
-local resting = nil
+-- Where the pointer rests now: the card it waits on (slug .. " " .. num) and
+-- the anchor, so a card that arrives after the pointer moved on is not shown
+-- where it no longer is.
+local resting, rest_at = nil, nil
 -- Whether the tooltip up is this plugin's: only that one is taken down, so
 -- linkhover's (or another's) on the same hover is left standing.
 local tipped = false
+
+local function keys()
+  return { { "ctrl+click", ranma.get("kumiko.click") == "browser" and "browser" or "view" },
+           { "ctrl+right-click", "more" } }
+end
 
 local function tooltip(at, c)
   local done, lines = checklist(c)
@@ -712,14 +725,26 @@ local function tooltip(at, c)
   ranma.tooltip(at, {
     title = c.id,
     lines = { { { cut(c.title or c.id, 72), "normal", strong = true } }, facts },
-    keys = { { "ctrl+click", ranma.get("kumiko.click") == "browser" and "browser" or "view" },
-             { "ctrl+right-click", "more" } },
+    keys = keys(),
   })
 end
 
--- A tooltip never asks which board: with none named or guessed right, it
--- shows nothing. It fetches a card once per kumiko.refresh, and the hover
--- that waits on it is the one that shows it.
+-- A tooltip that says where things stand when there is no card to show yet.
+local function note(at, num, text, role)
+  tipped = true
+  ranma.tooltip(at, { title = num, lines = { { { text, role or "dim" } } }, keys = keys() })
+end
+
+-- What a lookup came to, as the tooltip shows it.
+local function show_found(at, num, slug, known)
+  if known.card then return tooltip(at, known.card) end
+  if known.err then return note(at, num, slug .. ": " .. known.err, "urgent") end
+  note(at, num, "not on " .. slug)
+end
+
+-- A tooltip never asks which board: it says there is none, and ctrl+click
+-- asks. It shows at once, "fetching" until the card lands, and fetches a card
+-- once per kumiko.refresh.
 ranma.on("hover", function(e)
   if not ranma.get("kumiko.hover") then return end
   local p, num, col, span = card_under(e)
@@ -728,24 +753,26 @@ ranma.on("hover", function(e)
     if tipped then tipped = false ranma.tooltip(nil) end
     return
   end
-  local _, slug = here(p)
-  if not slug then return end
-  local key = slug .. " " .. num
   local at = { pane = e.pane, line = e.line, col = col, span = span }
-  resting = key .. " " .. e.pane .. " " .. e.line .. " " .. col
-  local here_now = resting
+  local _, slug = here(p)
+  if not slug then
+    resting = nil
+    return note(at, num, "no board for this directory: ctrl+click to choose, or add a .kumiko")
+  end
+  local key = slug .. " " .. num
+  resting, rest_at = key, at
   local known = found[key]
   if known and os.time() - known.at < ranma.get("kumiko.refresh") then
-    if known.card then tooltip(at, known.card) end
-    return
+    return show_found(at, num, slug, known)
   end
+  note(at, num, "fetching from " .. slug .. "…")
   if finding[key] then return end
   finding[key] = true
-  find_card(slug, num, function(c, _, status)
+  find_card(slug, num, function(c, err)
     finding[key] = nil
-    -- A failed fetch (no board, no token) is remembered as nothing too, so
-    -- resting on the id does not ask again on every cell.
-    if c == nil then found[key] = { at = os.time(), card = false, status = status } end
-    if c and resting == here_now then tooltip(at, c) end
+    -- A failed fetch (no token, no such board) is remembered too, so resting
+    -- on the id does not ask again on every cell.
+    if c == nil then found[key] = { at = os.time(), card = false, err = err } end
+    if resting == key then show_found(rest_at, num, slug, found[key]) end
   end)
 end)

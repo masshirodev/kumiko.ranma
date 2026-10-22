@@ -61,8 +61,10 @@ as openpath.ranma treats a path, on the board of that pane's repository:
                      the pane, copy the reference, the id or the address.
   hover              a tooltip: the title, the column, labels, checklist
                      (kumiko.hover; needs the mouse on, the `mouse`
-                     setting not "off"). It fetches a card once per
-                     kumiko.refresh and never asks which board.
+                     setting not "off"). It shows at once: "fetching"
+                     until the card lands, then the card, "not on
+                     <board>", or why the fetch failed. It fetches a card
+                     once per kumiko.refresh and never asks which board.
 A link, or a word that is a file in the pane's directory, is left to
 openpath and linkhover. Alt+click works the same as Ctrl+click.
 
@@ -71,7 +73,8 @@ Which board: a `.kumiko` file at the repository's top saying
 kumiko.boards, mapping a repository's directory name to a board slug
 (`kumiko=work-hours *.ranma=ranma`); else the board whose slug is the
 repository's name, and with none the picker asks which board. A worktree
-counts as its main checkout. Pins are kept in ranma.store("kumiko").
+counts as its main checkout; a `.git` that is not a repository (a stub
+directory with no HEAD) does not count, and the search goes on above it. Pins are kept in ranma.store("kumiko").
 Read-only: it never creates, moves or edits a card. The API token is read
 from the environment variable kumiko.token_env and reaches curl on its
 stdin, never in a process's arguments.
